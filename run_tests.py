@@ -16,7 +16,6 @@ input_filepath = 'input.txt'
 iterations = 5
 output_dir = 'out'
 tags = list()
-opt_no_erase = False
 opt_no_quant = False
 num_tokens_to_gen = 64
 is_dry = False
@@ -29,14 +28,13 @@ def print_usage_help():
     print("  --modelsfile=...   Uses the given file to look for LLM model names (Default: ./models.txt)")
     print("  --inputfile=...    Uses the given file as input for text generation (Default: ./input.txt)")
     print("  --iterations=...   Sets the number of iterationsto repeat individual tests (Default: 5)")
-    print("  --no-erase         Prevents the script from erasing previously cached models")
     print("  --no-quant         Forces the models to be loaded without quantization")
     print("  --outputdir=...    Outputs log files to the given directory (Default: ./out)")
     print("  --tag=...          Adds the given tag to the generated log files, can be called multiple times")
     print("  --tokens=...       Sets the number of tokens to generate (Default: 64)")
     print("\nExamples:")
     print("  run_tests.py --iterations=3 --tag=fewer-iterations --tag=hello")
-    print("  run_tests.py --no-erase --outputdir=./logs\n")
+    print("  run_tests.py --outputdir=./logs\n")
 
 # process command-line arguments
 for arg in sys.argv[1:]:
@@ -47,8 +45,6 @@ for arg in sys.argv[1:]:
         case "--help":
             print_usage_help()
             exit(0)
-        case "--no-erase":
-            opt_no_erase = True
         case "--no-quant":
             opt_no_quant = True
         case _:
@@ -105,7 +101,6 @@ if is_dry:
     print(f'Output directory: {os.path.abspath(output_dir)}')
     print(f'# of tokens to generate: {num_tokens_to_gen}')
     print(f'# of iterations: {iterations}')
-    print(f'Erase model cache? {"NO" if opt_no_erase else "YES"}')
     print(f'4-bit quantize? {"NO" if opt_no_quant else "YES"}')
     print(f'Models file: {os.path.abspath(models_filepath)}')
     print(f'Input file: {os.path.abspath(input_filepath)}')
@@ -131,10 +126,6 @@ hf_models.login_by_token()
 
 # ensure models are loaded in the cache
 # we do not want to benchmark network download times!
-if not opt_no_erase:
-    print("Erasing cached models...")
-    hf_models.erase_cached_models()
-print("Downloading models...")
 for m in models:
     hf_models.download_model(m)
 print("Download(s) complete")
