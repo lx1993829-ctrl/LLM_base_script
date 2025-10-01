@@ -24,6 +24,14 @@ from torch import nn
 import tqdm
 import os
 import sys
+import hf_models
+from statlog import Log
+from datetime import datetime
+from multiprocessing import Pipe, Process
+from multiprocessing.connection import Connection
+from pathlib import Path
+from time import sleep
+
 
 # set up default variables
 input_filepath = 'input.txt'
@@ -169,7 +177,7 @@ def build_model_and_enc(model_path, dtype):
         args.run_awq &= not args.load_awq  # if load_awq, no need to run awq
         # Init model on CPU:
         model = AutoModelForCausalLM.from_pretrained(
-            model_path, config=config, trust_remote_code=True, **kwargs
+            model_path, config=config, trust_remote_code=True, 
         )
 
         model.eval()
@@ -225,11 +233,7 @@ def build_model_and_enc(model_path, dtype):
                 raise NotImplementedError
 
         # Move the model to GPU (as much as possible) for LM evaluation
-        kwargs = {
-            "max_memory": get_balanced_memory(
-                model, max_memory if len(max_memory) > 0 else None
-            )
-        }
+
         device_map = infer_auto_device_map(
             model,
             # TODO: can we remove this?
@@ -240,7 +244,6 @@ def build_model_and_enc(model_path, dtype):
                 "MPTBlock",
                 "DecoderLayer",
             ],
-            **kwargs,
         )
         model = dispatch_model(model, device_map=device_map)
 
@@ -257,30 +260,8 @@ print(f'Got {len(input_data)} characters')
 # set up suffix from tags
 suffix = '_'.join(tags)
 
-
-# post-argument-checking imports (to prevent time delay)
-import hf_models
-from statlog import Log
-
-from datetime import datetime
-from multiprocessing import Pipe, Process
-from multiprocessing.connection import Connection
-from pathlib import Path
-from time import sleep
-
 # set up datestring for subfolder
 date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-
-# login to huggingface hub (for access to gated models)
-hf_models.login_by_token()
-
-# ensure models are loaded in the cache
-# we do not want to benchmark network download times!
-for m in models:
-    hf_models.download_model(m)
-print("Download(s) complete")
-sleep(3)
-
 
 # The following function is used in a separate process to run the generation test.
 # Add/change any desired testing functionality in this function to ensure it is tested on each model!
