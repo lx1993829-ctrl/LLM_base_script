@@ -26,14 +26,12 @@ import os
 import sys
 
 # set up default variables
-models_filepath = 'models.txt'
 input_filepath = 'input.txt'
 iterations = 5
 output_dir = 'out'
 tags = list()
 opt_no_quant = False
 num_tokens_to_gen = 64
-is_dry = False
 
 # function for printing the usage text
 parser = argparse.ArgumentParser(
@@ -104,22 +102,15 @@ parser.add_argument("--dump_awq", type=str, default=None,
 parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
 
-# VILA-specific options
-parser.add_argument("--vila-15", action="store_true",
-                    help="Quantizing VILA 1.5")
+if args.auto_parallel:
+    gpu_list = auto_parallel(args)
 
-parser.add_argument("--vila-20", action="store_true",
-                    help="Quantizing or smoothing VILA 2.0 (NVILA)")
-
-parser.add_argument("--smooth_scale", action="store_true",
-                    help="Generate the act scale of visiontower")
-
-parser.add_argument("--media_path", type=str, nargs="+",
-                    help="Input video(s) to get act scale for visiontower")
-
-parser.add_argument("--act_scale_path", type=str, default=None,
-                    help="Path to save act scale")
-
+# get quantization config (apart from w_bit)
+q_config = {
+    "zero_point": not args.no_zero_point,  # by default True
+    "q_group_size": args.q_group_size,  # whether to use group quantization
+}
+print("Quantization config:", q_config)
 
 def build_model_and_enc(model_path, dtype):
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
@@ -128,29 +119,17 @@ def build_model_and_enc(model_path, dtype):
     print(f"* Building model {model_path}")
 
     # all hf model
-    if vila_10_quant_mode:
-        from llava.model.builder import load_pretrained_model
-        from llava.mm_utils import get_model_name_from_path
-
-        enc, model, image_processor, context_len = load_pretrained_model(
-            model_path=model_path,
-            model_base=None,
-            model_name=get_model_name_from_path(model_path),
-            device="cpu",
-            **{"use_cache": False},
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    # Note: To avoid OOM after huggingface transformers 4.36.2
+    config.use_cache = False
+    if "mpt" in config.__class__.__name__.lower():
+        enc = AutoTokenizer.from_pretrained(
+            config.tokenizer_name, trust_remote_code=True
         )
     else:
-        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-        # Note (Haotian): To avoid OOM after huggingface transformers 4.36.2
-        config.use_cache = False
-        if "mpt" in config.__class__.__name__.lower():
-            enc = AutoTokenizer.from_pretrained(
-                config.tokenizer_name, trust_remote_code=True
-            )
-        else:
-            enc = AutoTokenizer.from_pretrained(
-                model_path, use_fast=False, trust_remote_code=True
-            )
+        enc = AutoTokenizer.from_pretrained(
+            model_path, use_fast=False, trust_remote_code=True
+        )
 
     if args.load_quant:  # directly load quantized weights
         print("Loading pre-computed quantized weights...")
@@ -189,11 +168,9 @@ def build_model_and_enc(model_path, dtype):
     else:  # fp16 to quantized
         args.run_awq &= not args.load_awq  # if load_awq, no need to run awq
         # Init model on CPU:
-        kwargs = {"torch_dtype": torch_dtype, "low_cpu_mem_usage": True}
-        if not vila_10_quant_mode:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path, config=config, trust_remote_code=True, **kwargs
-            )
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path, config=config, trust_remote_code=True, **kwargs
+        )
 
         model.eval()
 
@@ -270,14 +247,6 @@ def build_model_and_enc(model_path, dtype):
     return model, enc
 
 
-# load models from the list of names in the given file
-print("Loading model names...", end='')
-models = []
-with open(models_filepath, 'r') as model_file:
-    for m in model_file.readlines():
-        models.append(m.rstrip('\n'))
-print(f'Got {len(models)} models')
-
 # load input data (text) from the given input file
 print("Loading input text...", end='')
 input_data = ""
@@ -287,17 +256,6 @@ print(f'Got {len(input_data)} characters')
 
 # set up suffix from tags
 suffix = '_'.join(tags)
-
-# dryness check
-if is_dry:
-    print(f'Output directory: {os.path.abspath(output_dir)}')
-    print(f'# of tokens to generate: {num_tokens_to_gen}')
-    print(f'# of iterations: {iterations}')
-    print(f'4-bit quantize? {"NO" if opt_no_quant else "YES"}')
-    print(f'Models file: {os.path.abspath(models_filepath)}')
-    print(f'Input file: {os.path.abspath(input_filepath)}')
-    print(f'Suffix: {suffix}')
-    exit(0)
 
 
 # post-argument-checking imports (to prevent time delay)
