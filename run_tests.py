@@ -19,7 +19,6 @@ from awq.quantize.quantizer import (
 )
 from awq.utils.lm_eval_adaptor import LMEvalAdaptor
 from awq.utils.utils import simple_dispatch_model
-from datasets import load_dataset
 from torch import nn
 import tqdm
 import os
