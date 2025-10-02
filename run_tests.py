@@ -107,9 +107,48 @@ parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
 
 
+def generate_attention_heatmap(model, enc, text, layer=3, head=2):
+    """
+    Generates and displays a heatmap for a specific attention layer and head.
+    
+    Args:
+        model: HuggingFace AutoModelForCausalLM
+        enc: HuggingFace tokenizer
+        text: Input string
+        layer: Layer index to visualize (default 3)
+        head: Head index to visualize (default 2)
+    """
+    # Tokenize input
+    inputs = enc(text, return_tensors="pt")
+    
+    # Ensure the model outputs attentions
+    model.eval()
+    model.config.output_attentions = True
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    # Grab the attention matrix
+    # outputs.attentions: list of [batch, heads, seq_len, seq_len]
+    attn = outputs.attentions[layer][0, head].cpu().numpy()
+    
+    # Plot heatmap
+    import matplotlib.pyplot as plt
+    import seaborn as sns
 
-
-
+    plt.figure(figsize=(8,6))
+    sns.heatmap(attn, cmap="viridis")
+    plt.title(f"Attention heatmap (Layer {layer}, Head {head})")
+    
+    # Optional: label axes with tokens
+    tokens = enc.convert_ids_to_tokens(inputs["input_ids"][0])
+    plt.xticks(ticks=range(len(tokens)), labels=tokens, rotation=90)
+    plt.yticks(ticks=range(len(tokens)), labels=tokens, rotation=0)
+    
+    plt.xlabel("Key tokens")
+    plt.ylabel("Query tokens")
+    plt.tight_layout()
+    plt.show()
 
 def build_model_and_enc(model_path, dtype, args):
     q_config = {
