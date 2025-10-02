@@ -106,7 +106,6 @@ parser.add_argument("--dump_awq", type=str, default=None,
 parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
 
-args = parser.parse_args()
 
 
 
@@ -369,6 +368,7 @@ def run_tasks(args):
 
 
 def main():
+    args = parser.parse_args()
     if args.dump_awq and os.path.exists(args.dump_awq):
         print(f"Found existing AWQ results {args.dump_awq}, exit.")
         exit()    
