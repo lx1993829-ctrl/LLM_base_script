@@ -117,7 +117,7 @@ print("Quantization config:", q_config)
 
 
 
-def build_model_and_enc(model_path, dtype):
+def build_model_and_enc(model_path, dtype, args):
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
     if not os.path.exists(model_path):  # look into ssd
         raise FileNotFoundError(f"{model_path} not found!")
@@ -260,7 +260,7 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
     sleep(3) # buffer time
 
     conn.send('MODEL_LOAD_START')
-    model, enc = build_model_and_enc(args.model_path, args.dtype)
+    model, enc = build_model_and_enc(args.model_path, args.dtype, args)
     conn.send('MODEL_LOAD_END')
 
     sleep(3) # buffer time
@@ -274,7 +274,7 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
     print(output)
     conn.close()
 
-def run_input(iterations, num_tokens_to_gen):
+def run_input(args):
     # load input data (text) from the given input file
     print("Loading input text...", end='')
     input_data = ""
@@ -282,7 +282,7 @@ def run_input(iterations, num_tokens_to_gen):
         input_data = '\n'.join(input_file.readlines())
     print(f'Got {len(input_data)} characters')
     
-    for i in range(iterations):
+    for i in range(args.iterations):
         # set up datestring for subfolder
         date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
         print(f'\n### Beginning ({i+1}/{iterations})')
@@ -294,7 +294,7 @@ def run_input(iterations, num_tokens_to_gen):
         # this allows us to cleanly release all memory, both CPU and GPU
         # additionally, a pipe is used to send back timestamped messages for the log
         msg_recv, msg_send = Pipe()
-        proc = Process(target=_individual_test, args=[input_data, msg_send, num_tokens_to_gen, args])
+        proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args])
         proc.start()
         while proc.is_alive():
             if msg_recv.poll():
@@ -324,7 +324,7 @@ def run_input(iterations, num_tokens_to_gen):
         with open(outfilepath, 'w') as fp:
             fp.write(json_str)
 
-def run_tasks():
+def run_tasks(args):
     date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')    
     test_log = Log()
     test_log.begin(interval=0.1)
@@ -332,7 +332,7 @@ def run_tasks():
     sleep(15)
     
     print('MODEL_LOAD_START')
-    model, enc = build_model_and_enc(args.model_path, args.dtype)
+    model, enc = build_model_and_enc(args.model_path, args.dtype, args)
     print('MODEL_LOAD_END')
     sleep(3) # buffer time
     if args.tasks is not None:
@@ -369,9 +369,9 @@ def main():
 
     # Dispatch to the correct function
     if args.run_tasks:
-        run_tasks()
+        run_tasks(args)
     elif args.run_input:
-        run_input(args.iterations, args.tokens)
+        run_input(args)
 
 
 if __name__ == "__main__":
