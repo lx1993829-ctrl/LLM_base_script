@@ -33,14 +33,6 @@ from pathlib import Path
 from time import sleep
 
 
-# set up default variables
-input_filepath = 'input.txt'
-iterations = 5
-output_dir = 'out'
-
-opt_no_quant = False
-num_tokens_to_gen = 64
-
 # function for printing the usage text
 parser = argparse.ArgumentParser(
     description="Run LLM tests with configurable options."
