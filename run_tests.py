@@ -265,7 +265,7 @@ def _individual_test(in_data, conn, tokens_to_gen):
     print(output)
     conn.close()
 
-def run_input(iterations, num_tokens_to_gen)
+def run_input(iterations, num_tokens_to_gen):
     # load input data (text) from the given input file
     print("Loading input text...", end='')
     input_data = ""
@@ -347,8 +347,8 @@ def run_tasks():
 
 def main():
     if args.dump_awq and os.path.exists(args.dump_awq):
-    print(f"Found existing AWQ results {args.dump_awq}, exit.")
-    exit()    
+        print(f"Found existing AWQ results {args.dump_awq}, exit.")
+        exit()    
     
     if args.auto_parallel:
         gpu_list = auto_parallel(args)
