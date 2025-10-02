@@ -107,6 +107,15 @@ parser.add_argument("--load_awq", type=str, default=None,
 
 args = parser.parse_args()
 
+
+q_config = {
+    "zero_point": not args.no_zero_point,  # by default True
+    "q_group_size": args.q_group_size,  # whether to use group quantization
+}
+print("Quantization config:", q_config)
+
+
+
 def build_model_and_enc(model_path, dtype):
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
     if not os.path.exists(model_path):  # look into ssd
@@ -268,7 +277,7 @@ def run_input(iterations, num_tokens_to_gen):
     # load input data (text) from the given input file
     print("Loading input text...", end='')
     input_data = ""
-    with open(input_filepath, 'r') as input_file:
+    with open(args.inputfile, 'r') as input_file:
         input_data = '\n'.join(input_file.readlines())
     print(f'Got {len(input_data)} characters')
     
@@ -304,7 +313,7 @@ def run_input(iterations, num_tokens_to_gen):
         print(f'### Finished ({i+1}/{iterations}), generated {test_log.tokens_generated} tokens')
     
         # save the log to a file for analysis
-        outfolder = os.path.join(os.path.abspath(output_dir), date_str)
+        outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
         Path(outfolder).mkdir(parents=True, exist_ok=True)
         log_name_parts = ['log', str(i+1)]
         outfilename = '_'.join(log_name_parts) + '.json'
@@ -362,7 +371,7 @@ def main():
     if args.run_tasks:
         run_tasks()
     elif args.run_input:
-        run_input()
+        run_input(args.iterations, args.tokens)
 
 
 if __name__ == "__main__":
