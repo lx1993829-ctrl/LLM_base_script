@@ -257,7 +257,7 @@ def _individual_test(in_data, conn, tokens_to_gen):
     sleep(3) # buffer time
 
     conn.send('GENERATE_START')
-    output, new_tokens = hf_models.generate_from_input(mdl, tk, in_data, max_new_tokens=tokens_to_gen)
+    output, new_tokens = hf_models.generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
     conn.send('GENERATE_END')
 
     # TEST END
