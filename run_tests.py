@@ -109,15 +109,15 @@ parser.add_argument("--load_awq", type=str, default=None,
 args = parser.parse_args()
 
 
-q_config = {
-    "zero_point": not args.no_zero_point,  # by default True
-    "q_group_size": args.q_group_size,  # whether to use group quantization
-}
-print("Quantization config:", q_config)
 
 
 
 def build_model_and_enc(model_path, dtype, args):
+    q_config = {
+    "zero_point": not args.no_zero_point,  # by default True
+    "q_group_size": args.q_group_size,  # whether to use group quantization
+    }
+    print("Quantization config:", q_config)
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
     if not os.path.exists(model_path):  # look into ssd
         raise FileNotFoundError(f"{model_path} not found!")
@@ -285,7 +285,7 @@ def run_input(args):
     for i in range(args.iterations):
         # set up datestring for subfolder
         date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-        print(f'\n### Beginning ({i+1}/{iterations})')
+        print(f'\n### Beginning ({i+1}/{args.iterations})')
         test_log = Log()
         test_log.begin(interval=0.1)
         sleep(3) # buffer time
@@ -311,7 +311,7 @@ def run_input(args):
     
         sleep(3) # buffer time
         test_log.end()
-        print(f'### Finished ({i+1}/{iterations}), generated {test_log.tokens_generated} tokens')
+        print(f'### Finished ({i+1}/{args.iterations}), generated {test_log.tokens_generated} tokens')
     
         # save the log to a file for analysis
         outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
@@ -335,6 +335,7 @@ def run_tasks(args):
     model, enc = build_model_and_enc(args.model_path, args.dtype, args)
     print('MODEL_LOAD_END')
     sleep(3) # buffer time
+
     if args.tasks is not None:
         task_names = args.tasks.split(",")
         lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
@@ -346,17 +347,26 @@ def run_tasks(args):
             num_fewshot=args.num_fewshot,
         )
         print(evaluator.make_table(results)) 
+
         if args.outputdir is not None:
-            if args.outputdir.endswith(".json"):
-                os.makedirs(os.path.dirname(args.outputdir), exist_ok=True)
-            else:
-                os.makedirs(args.outputdir, exist_ok=True)
-                args.outputdir = os.path.join(args.outputdir, "results.json")
-            # otherwise cannot save
+            os.makedirs(args.outputdir, exist_ok=True)
+
+            # Build a filename using task names + date
+            task_suffix = "_".join(task_names)
+            outfilename = f"results_{task_suffix}_{date_str}.json"
+            output_path = os.path.join(args.outputdir, outfilename)
+
+            # Add task names to results metadata
             results["config"]["model"] = args.model_path
-            with open(args.outputdir, "w") as f:
+            results["config"]["tasks"] = task_names  
+
+            with open(output_path, "w") as f:
                 json.dump(results, f, indent=2)
+
+            print(f"Saved results to {output_path}")
+
     test_log.end()
+
 
 def main():
     if args.dump_awq and os.path.exists(args.dump_awq):
