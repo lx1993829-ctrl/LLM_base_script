@@ -37,7 +37,7 @@ from time import sleep
 input_filepath = 'input.txt'
 iterations = 5
 output_dir = 'out'
-tags = list()
+
 opt_no_quant = False
 num_tokens_to_gen = 64
 
@@ -52,14 +52,16 @@ parser.add_argument("--model_path", type=str,
 parser.add_argument("--inputfile", type=str, default="./input.txt",
                     help="File used as input for text generation (Default: ./input.txt)")
 
+group = parser.add_mutually_exclusive_group(required=True)
+group.add_argument("--run_tasks", action="store_true", help="Run the tasks workflow")
+group.add_argument("--run_input", action="store_true", help="Run the input workflow")
+
+
 parser.add_argument("--iterations", type=int, default=5,
                     help="Number of iterations to repeat individual tests (Default: 5)")
 
 parser.add_argument("--outputdir", type=str, default="./out",
                     help="Directory to output log files (Default: ./out)")
-
-parser.add_argument("--tag", action="append", default=[],
-                    help="Add a tag to the generated log files, can be called multiple times")
 
 parser.add_argument("--tokens", type=int, default=64,
                     help="Number of tokens to generate (Default: 64)")
@@ -73,6 +75,8 @@ parser.add_argument("--batch_size", type=int, default=1,
 
 parser.add_argument("--tasks", type=str, default=None,
                     help="Tasks to evaluate")
+
+parser.add_argument("--num_fewshot", type=int, default=0)
 
 parser.add_argument("--auto_parallel", action="store_true",
                     help="Automatically set parallel and batch_size")
@@ -110,15 +114,7 @@ parser.add_argument("--dump_awq", type=str, default=None,
 parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
 
-if args.auto_parallel:
-    gpu_list = auto_parallel(args)
 
-# get quantization config (apart from w_bit)
-q_config = {
-    "zero_point": not args.no_zero_point,  # by default True
-    "q_group_size": args.q_group_size,  # whether to use group quantization
-}
-print("Quantization config:", q_config)
 
 def build_model_and_enc(model_path, dtype):
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
@@ -250,26 +246,11 @@ def build_model_and_enc(model_path, dtype):
     return model, enc
 
 
-# load input data (text) from the given input file
-print("Loading input text...", end='')
-input_data = ""
-with open(input_filepath, 'r') as input_file:
-    input_data = '\n'.join(input_file.readlines())
-print(f'Got {len(input_data)} characters')
-
-# set up suffix from tags
-suffix = '_'.join(tags)
-
-# set up datestring for subfolder
-date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-
 # The following function is used in a separate process to run the generation test.
-# Add/change any desired testing functionality in this function to ensure it is tested on each model!
-def _individual_test(model_name: str, in_data, conn: Connection, do_quantize: bool, tokens_to_gen: int):
+def _individual_test(in_data, conn, tokens_to_gen):
     '''Test method content, performed on a separate process.'''
     # Change any content within TEST BEGIN and TEST END to change the testing behavior!
     # TEST BEGIN
-
     conn.send('IDLE_START')
     print('Running idle period for power baseline')
     sleep(15)
@@ -278,12 +259,7 @@ def _individual_test(model_name: str, in_data, conn: Connection, do_quantize: bo
     sleep(3) # buffer time
 
     conn.send('MODEL_LOAD_START')
-    mdl = None
-    tk = None
-    if do_quantize:
-        mdl, tk = hf_models.load_model_quantized(model_name)
-    else:
-        mdl, tk = hf_models.load_model(model_name)
+    model, enc = build_model_and_enc(args.model_path, args.dtype)
     conn.send('MODEL_LOAD_END')
 
     sleep(3) # buffer time
@@ -297,22 +273,27 @@ def _individual_test(model_name: str, in_data, conn: Connection, do_quantize: bo
     print(output)
     conn.close()
 
-
-# run tests
-for m in models:
+def run_input(iterations, num_tokens_to_gen)
+    # load input data (text) from the given input file
+    print("Loading input text...", end='')
+    input_data = ""
+    with open(input_filepath, 'r') as input_file:
+        input_data = '\n'.join(input_file.readlines())
+    print(f'Got {len(input_data)} characters')
+    
     for i in range(iterations):
-        m_subname = m.split('/')[-1]
-        print(f'\n### Beginning test of {m_subname} ({i+1}/{iterations})')
-
+        # set up datestring for subfolder
+        date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        print(f'\n### Beginning ({i+1}/{iterations})')
         test_log = Log()
         test_log.begin(interval=0.1)
         sleep(3) # buffer time
-
+    
         # here we put all of the model loading and usage in a separate process
         # this allows us to cleanly release all memory, both CPU and GPU
         # additionally, a pipe is used to send back timestamped messages for the log
         msg_recv, msg_send = Pipe()
-        proc = Process(target=_individual_test, args=[m, input_data, msg_send, not opt_no_quant, num_tokens_to_gen])
+        proc = Process(target=_individual_test, args=[input_data, msg_send, num_tokens_to_gen])
         proc.start()
         while proc.is_alive():
             if msg_recv.poll():
@@ -326,22 +307,72 @@ for m in models:
         if not msg_send.closed:
             msg_send.close()
         msg_recv.close()
-
+    
         sleep(3) # buffer time
         test_log.end()
-        print(f'### Finished test of {m_subname} ({i+1}/{iterations}), generated {test_log.tokens_generated} tokens')
-
+        print(f'### Finished ({i+1}/{iterations}), generated {test_log.tokens_generated} tokens')
+    
         # save the log to a file for analysis
         outfolder = os.path.join(os.path.abspath(output_dir), date_str)
         Path(outfolder).mkdir(parents=True, exist_ok=True)
-        log_name_parts = ['log', m_subname, str(i+1)]
-        if opt_no_quant:
-            log_name_parts.append('no-quant')
-        if len(suffix) > 0:
-            log_name_parts.append(suffix)
+        log_name_parts = ['log', str(i+1)]
         outfilename = '_'.join(log_name_parts) + '.json'
         outfilepath = os.path.join(outfolder, outfilename)
         print(f'### Saving log to {outfilepath}')
         json_str = test_log.to_json()
         with open(outfilepath, 'w') as fp:
             fp.write(json_str)
+
+def run_tasks():
+    date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')    
+    test_log = Log()
+    test_log.begin(interval=0.1)
+    print('Running idle period for power baseline')
+    sleep(15)
+    
+    print('MODEL_LOAD_START')
+    model, enc = build_model_and_enc(args.model_path, args.dtype)
+    print('MODEL_LOAD_END')
+    sleep(3) # buffer time
+    if args.tasks is not None:
+        task_names = args.tasks.split(",")
+        lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
+        results = evaluator.simple_evaluate(
+            model=lm_eval_model,
+            tasks=task_names,
+            batch_size=args.batch_size,
+            no_cache=True,
+            num_fewshot=args.num_fewshot,
+        )
+        print(evaluator.make_table(results)) 
+        if args.outputdir is not None:
+            os.makedirs(os.path.dirname(args.outputdir), exist_ok=True)
+            # otherwise cannot save
+            results["config"]["model"] = args.model_path
+            with open(args.outputdir, "w") as f:
+                json.dump(results, f, indent=2)
+    test_log.end()
+
+def main():
+    if args.dump_awq and os.path.exists(args.dump_awq):
+    print(f"Found existing AWQ results {args.dump_awq}, exit.")
+    exit()    
+    
+    if args.auto_parallel:
+        gpu_list = auto_parallel(args)
+    
+    # get quantization config (apart from w_bit)
+    q_config = {
+        "zero_point": not args.no_zero_point,  # by default True
+        "q_group_size": args.q_group_size,  # whether to use group quantization
+    }
+    print("Quantization config:", q_config)
+    # Dispatch to the correct function
+    if args.run_tasks:
+        run_tasks()
+    elif args.run_input:
+        run_input()
+
+
+if __name__ == "__main__":
+    main()
