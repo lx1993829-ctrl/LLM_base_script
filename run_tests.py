@@ -277,8 +277,12 @@ def run_input(args):
     # load input data (text) from the given input file
     print("Loading input text...", end='')
     input_data = ""
-    with open(args.inputfile, 'r') as input_file:
-        input_data = '\n'.join(input_file.readlines())
+    try:
+        with open(args.inputfile, 'r') as input_file:
+            input_data = '\n'.join(input_file.readlines())
+    except FileNotFoundError:
+        print(f"Input file {args.inputfile} not found!")
+        return
     print(f'Got {len(input_data)} characters')
     
     for i in range(args.iterations):
@@ -350,19 +354,23 @@ def run_tasks(args):
         if args.outputdir is not None:
             os.makedirs(args.outputdir, exist_ok=True)
 
-            # Build a filename using task names + date
-            task_suffix = "_".join(task_names)
-            outfilename = f"results_{task_suffix}_{date_str}.json"
-            output_path = os.path.join(args.outputdir, outfilename)
-
-            # Add task names to results metadata
-            results["config"]["model"] = args.model_path
-            results["config"]["tasks"] = task_names  
-
-            with open(output_path, "w") as f:
-                json.dump(results, f, indent=2)
-
-            print(f"Saved results to {output_path}")
+        # Create a timestamped subfolder like run_input
+        outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
+        Path(outfolder).mkdir(parents=True, exist_ok=True)
+    
+        # Build filename using task names
+        task_suffix = "_".join(task_names)
+        outfilename = f"results_{task_suffix}.json"
+        output_path = os.path.join(outfolder, outfilename)
+    
+        # Add metadata
+        results["config"]["model"] = args.model_path
+        results["config"]["tasks"] = task_names  
+    
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2)
+    
+        print(f"Saved results to {output_path}")
 
     test_log.end()
 
