@@ -105,7 +105,7 @@ parser.add_argument("--dump_awq", type=str, default=None,
 parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
 
-
+args = parser.parse_args()
 
 def build_model_and_enc(model_path, dtype):
     torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
