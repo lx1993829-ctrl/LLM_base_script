@@ -30,7 +30,8 @@ from multiprocessing import Pipe, Process
 from multiprocessing.connection import Connection
 from pathlib import Path
 from time import sleep
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # function for printing the usage text
 parser = argparse.ArgumentParser(
@@ -247,7 +248,7 @@ def build_model_and_enc(model_path, dtype):
 
 
 # The following function is used in a separate process to run the generation test.
-def _individual_test(in_data, conn, tokens_to_gen):
+def _individual_test(in_data, conn, tokens_to_gen, args):
     '''Test method content, performed on a separate process.'''
     # Change any content within TEST BEGIN and TEST END to change the testing behavior!
     # TEST BEGIN
@@ -293,7 +294,7 @@ def run_input(iterations, num_tokens_to_gen):
         # this allows us to cleanly release all memory, both CPU and GPU
         # additionally, a pipe is used to send back timestamped messages for the log
         msg_recv, msg_send = Pipe()
-        proc = Process(target=_individual_test, args=[input_data, msg_send, num_tokens_to_gen])
+        proc = Process(target=_individual_test, args=[input_data, msg_send, num_tokens_to_gen, args])
         proc.start()
         while proc.is_alive():
             if msg_recv.poll():
@@ -346,7 +347,11 @@ def run_tasks():
         )
         print(evaluator.make_table(results)) 
         if args.outputdir is not None:
-            os.makedirs(os.path.dirname(args.outputdir), exist_ok=True)
+            if args.outputdir.endswith(".json"):
+                os.makedirs(os.path.dirname(args.outputdir), exist_ok=True)
+            else:
+                os.makedirs(args.outputdir, exist_ok=True)
+                args.outputdir = os.path.join(args.outputdir, "results.json")
             # otherwise cannot save
             results["config"]["model"] = args.model_path
             with open(args.outputdir, "w") as f:
@@ -361,12 +366,7 @@ def main():
     if args.auto_parallel:
         gpu_list = auto_parallel(args)
     
-    # get quantization config (apart from w_bit)
-    q_config = {
-        "zero_point": not args.no_zero_point,  # by default True
-        "q_group_size": args.q_group_size,  # whether to use group quantization
-    }
-    print("Quantization config:", q_config)
+
     # Dispatch to the correct function
     if args.run_tasks:
         run_tasks()
