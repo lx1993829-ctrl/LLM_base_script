@@ -334,18 +334,21 @@ def run_input(args):
         print(f"Input file {args.inputfile} not found!")
         return
     print(f'Got {len(input_data)} characters')
-    
+
+    # 1️⃣ Create one folder for all logs based on current time
+    date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
+    Path(outfolder).mkdir(parents=True, exist_ok=True)
+    print(f'All logs will be saved in: {outfolder}')
+
+    # 2️⃣ Loop over iterations
     for i in range(args.iterations):
-        # set up datestring for subfolder
-        date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
         print(f'\n### Beginning ({i+1}/{args.iterations})')
         test_log = Log()
         test_log.begin(interval=0.1)
-        sleep(3) # buffer time
-    
-        # here we put all of the model loading and usage in a separate process
-        # this allows us to cleanly release all memory, both CPU and GPU
-        # additionally, a pipe is used to send back timestamped messages for the log
+        sleep(3)  # buffer time
+
+        # run the model in a separate process
         msg_recv, msg_send = Pipe()
         proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args])
         proc.start()
@@ -354,23 +357,19 @@ def run_input(args):
                 message = str(msg_recv.recv())
                 test_log.add_timestamp(message)
                 msg_var = message.split(':')
-                if len(msg_var) > 1:
-                    if msg_var[0] == 'TOKENS':
-                        test_log.tokens_generated = int(msg_var[1])
+                if len(msg_var) > 1 and msg_var[0] == 'TOKENS':
+                    test_log.tokens_generated = int(msg_var[1])
         proc.join()
         if not msg_send.closed:
             msg_send.close()
         msg_recv.close()
-    
-        sleep(3) # buffer time
+
+        sleep(3)  # buffer time
         test_log.end()
         print(f'### Finished ({i+1}/{args.iterations}), generated {test_log.tokens_generated} tokens')
-    
-        # save the log to a file for analysis
-        outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
-        Path(outfolder).mkdir(parents=True, exist_ok=True)
-        log_name_parts = ['log', str(i+1)]
-        outfilename = '_'.join(log_name_parts) + '.json'
+
+        # 3️⃣ Save the log to a numbered file in the folder
+        outfilename = f'log_{i+1}.json'
         outfilepath = os.path.join(outfolder, outfilename)
         print(f'### Saving log to {outfilepath}')
         json_str = test_log.to_json()
