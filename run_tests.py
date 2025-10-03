@@ -117,55 +117,17 @@ def generate_from_input(model, tokenizer, input_text: str, max_new_tokens=64) ->
     return decoded, new_tokens
 
 
-
-def generate_attention_heatmap(model, enc, text, layer=3, head=1, save_path=None):
-    """
-    Generates a heatmap for a specific attention layer and head and saves it as a PDF.
-    
-    Args:
-        model: HuggingFace AutoModelForCausalLM
-        enc: HuggingFace tokenizer
-        text: Input string
-        layer: Layer index to visualize (default 3)
-        head: Head index to visualize (default 1)
-        save_path: Full path to save PDF. If None, plot is shown.
-    """
-    import torch
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    # Tokenize input
-    inputs = enc(text, return_tensors="pt").to(model.device)
-
-    # Ensure the model outputs attentions
-    model.eval()
-    model.config.output_attentions = True
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-    # Grab the attention matrix: [seq_len, seq_len] for given layer/head
-    attn = outputs.attentions[layer][0, head].cpu().numpy()
-
-    # Plot heatmap
+def generate_attention_heatmap(attn, tokens, save_path):
     plt.figure(figsize=(8,6))
     sns.heatmap(attn, cmap="viridis")
-    plt.title(f"Attention heatmap (Layer {layer}, Head {head})")
-
-    # Optional: label axes with tokens
-    tokens = enc.convert_ids_to_tokens(inputs["input_ids"][0])
+    plt.title("Attention heatmap (Layer 3, Head 1)")
     plt.xticks(ticks=range(len(tokens)), labels=tokens, rotation=90)
     plt.yticks(ticks=range(len(tokens)), labels=tokens, rotation=0)
-
     plt.xlabel("Key tokens")
     plt.ylabel("Query tokens")
     plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, format="pdf")
-        plt.close()
-    else:
-        plt.show()
+    plt.savefig(save_path, format="pdf")
+    plt.close()
 
 def build_model_and_enc(model_path, dtype, args):
     q_config = {
@@ -327,7 +289,17 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
     # TEST END
     conn.send(f'TOKENS:{len(new_tokens)}')
     print(output)
+    
+    # Capture attention of layer 3, head 1
+    with torch.no_grad():
+        inputs = enc(input_data, return_tensors="pt").to(model.device)
+        outputs = model(**inputs)
+        attn = outputs.attentions[3][0, 1].cpu().numpy()  # layer 3, head 1
+
+
+    conn.send({"attention": attn, "tokens": enc.convert_ids_to_tokens(inputs["input_ids"][0])})
     conn.close()
+    return output
 
 def run_input(args):
     # load input data (text) from the given input file
@@ -358,13 +330,17 @@ def run_input(args):
         msg_recv, msg_send = Pipe()
         proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args])
         proc.start()
+        attn_data = None
         while proc.is_alive():
             if msg_recv.poll():
-                message = str(msg_recv.recv())
-                test_log.add_timestamp(message)
-                msg_var = message.split(':')
-                if len(msg_var) > 1 and msg_var[0] == 'TOKENS':
-                    test_log.tokens_generated = int(msg_var[1])
+                message = msg_recv.recv()
+                if isinstance(message, str):
+                    test_log.add_timestamp(message)
+                    msg_var = message.split(':')
+                    if len(msg_var) > 1 and msg_var[0] == 'TOKENS':
+                        test_log.tokens_generated = int(msg_var[1])
+                elif isinstance(message, dict) and "attention" in message:
+                    attn_data = message
         proc.join()
         if not msg_send.closed:
             msg_send.close()
@@ -381,13 +357,11 @@ def run_input(args):
         json_str = test_log.to_json()
         with open(outfilepath, 'w') as fp:
             fp.write(json_str)
-            
-        # Save attention heatmap PDF in the same folder with matching name
-        heatmap_filename = f"log_{i+1}_attention.pdf"
-        heatmap_path = os.path.join(outfolder, heatmap_filename)
-        generate_attention_heatmap(model, enc, input_data, layer=3, head=1, save_path=heatmap_path)
-        print(f"### Saved attention heatmap to {heatmap_path}")
 
+        if attn_data is not None:
+            heatmap_path = os.path.join(outfolder, f"log_{i+1}_attention.pdf")
+            generate_attention_heatmap(attn_data["attention"], attn_data["tokens"], heatmap_path)
+            print(f"### Saved attention heatmap to {heatmap_path}")        
 
 def run_tasks(args):
     date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')    
