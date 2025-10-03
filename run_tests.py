@@ -23,7 +23,6 @@ from torch import nn
 import tqdm
 import os
 import sys
-import hf_models
 from statlog import Log
 from datetime import datetime
 from multiprocessing import Pipe, Process
@@ -105,6 +104,18 @@ parser.add_argument("--dump_awq", type=str, default=None,
 
 parser.add_argument("--load_awq", type=str, default=None,
                     help="Load the AWQ search results")
+
+def generate_from_input(model, tokenizer, input_text: str, max_new_tokens=64) -> tuple[str, list]:
+    '''Generates text from a given input, model, and tokenizer.
+    Returns the generated text and a list of the generated tokens.'''
+    model_inputs = tokenizer([input_text], return_tensors="pt").to("cuda")
+    print("Generating tokens...")
+    generated_ids = model.generate(**model_inputs, max_new_tokens=max_new_tokens, do_sample=True)
+    print("Decoding tokens...")
+    decoded = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    new_tokens = generated_ids[0][len(model_inputs['input_ids'][0]):]
+    return decoded, new_tokens
+
 
 
 def generate_attention_heatmap(model, enc, text, layer=3, head=2):
@@ -304,7 +315,7 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
     sleep(3) # buffer time
 
     conn.send('GENERATE_START')
-    output, new_tokens = hf_models.generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
+    output, new_tokens = generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
     conn.send('GENERATE_END')
 
     # TEST END
