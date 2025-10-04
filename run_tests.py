@@ -363,52 +363,105 @@ def run_input(args):
             generate_attention_heatmap(attn_data["attention"], attn_data["tokens"], heatmap_path)
             print(f"### Saved attention heatmap to {heatmap_path}")        
 
+def _task_worker(conn, args):
+    """Run LM Evaluation tasks inside a separate process."""
+    try:
+        conn.send('IDLE_START')
+        print('Running idle period for power baseline')
+        sleep(15)
+        conn.send('IDLE_END')
+
+        sleep(3)  # buffer
+
+        conn.send('MODEL_LOAD_START')
+        model, enc = build_model_and_enc(args.model_path, args.dtype, args)
+        conn.send('MODEL_LOAD_END')
+
+        sleep(3)  # buffer
+
+        if args.tasks is not None:
+            task_names = args.tasks.split(",")
+            lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
+
+            conn.send('TASK_RUN_START')
+            results = evaluator.simple_evaluate(
+                model=lm_eval_model,
+                tasks=task_names,
+                batch_size=args.batch_size,
+                no_cache=True,
+                num_fewshot=args.num_fewshot,
+            )
+            conn.send('TASK_RUN_END')
+
+            # Add metadata
+            results["config"]["model"] = args.model_path
+            results["config"]["tasks"] = task_names
+
+            conn.send({"results": results, "tasks": task_names})
+
+    except Exception as e:
+        conn.send({"error": str(e)})
+
+    finally:
+        conn.close()
+
+
 def run_tasks(args):
-    date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')    
+    """Main entry: start logging in parent, run evaluation in subprocess."""
+    date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
+    Path(outfolder).mkdir(parents=True, exist_ok=True)
+
+    print(f'All results and logs will be saved in: {outfolder}')
+
+    # 🟢 Start logging (parent process)
     test_log = Log()
     test_log.begin(interval=0.1)
-    print('Running idle period for power baseline')
-    sleep(15)
-    
-    print('MODEL_LOAD_START')
-    model, enc = build_model_and_enc(args.model_path, args.dtype, args)
-    print('MODEL_LOAD_END')
-    sleep(3) # buffer time
+    sleep(3)  # buffer before launch
 
-    if args.tasks is not None:
-        task_names = args.tasks.split(",")
-        lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
-        results = evaluator.simple_evaluate(
-            model=lm_eval_model,
-            tasks=task_names,
-            batch_size=args.batch_size,
-            no_cache=True,
-            num_fewshot=args.num_fewshot,
-        )
-        print(evaluator.make_table(results)) 
+    # 🧩 Launch subprocess for actual test
+    msg_recv, msg_send = Pipe()
+    proc = Process(target=_task_worker, args=(msg_send, args))
+    proc.start()
 
-        if args.outputdir is not None:
-            os.makedirs(args.outputdir, exist_ok=True)
+    results = None
+    while proc.is_alive():
+        if msg_recv.poll():
+            msg = msg_recv.recv()
+            if isinstance(msg, str):
+                # String messages mark event transitions
+                test_log.add_timestamp(msg)
+                print(f"Event: {msg}")
+            elif isinstance(msg, dict):
+                if "results" in msg:
+                    results = msg["results"]
+                elif "error" in msg:
+                    print(f"⚠️ Error in subprocess: {msg['error']}")
 
-        # Create a timestamped subfolder like run_input
-        outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
-        Path(outfolder).mkdir(parents=True, exist_ok=True)
-    
-        # Build filename using task names
-        task_suffix = "_".join(task_names)
-        outfilename = f"results_{task_suffix}.json"
-        output_path = os.path.join(outfolder, outfilename)
-    
-        # Add metadata
-        results["config"]["model"] = args.model_path
-        results["config"]["tasks"] = task_names  
-    
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2)
-    
-        print(f"Saved results to {output_path}")
+    proc.join()
+    msg_recv.close()
+    msg_send.close()
 
     test_log.end()
+    print("Task process complete.")
+
+    # 🟢 Save results
+    if results is not None:
+        task_suffix = "_".join(results["config"]["tasks"])
+        outfilename = f"results_{task_suffix}.json"
+        output_path = os.path.join(outfolder, outfilename)
+
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"✅ Saved results to {output_path}")
+
+        # Also save log
+        log_path = os.path.join(outfolder, "log.json")
+        with open(log_path, "w") as f:
+            f.write(test_log.to_json())
+        print(f"✅ Saved log to {log_path}")
+    else:
+        print("No results received from subprocess.")
 
 
 def main():
