@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 import torch
 import argparse
 import os
+import multiprocessing as mp
 import json
 from accelerate import (
     init_empty_weights,
@@ -31,6 +32,8 @@ from pathlib import Path
 from time import sleep
 import seaborn as sns
 import matplotlib.pyplot as plt
+from datasets import load_dataset
+
 
 # function for printing the usage text
 parser = argparse.ArgumentParser(
@@ -313,13 +316,13 @@ def run_input(args):
         return
     print(f'Got {len(input_data)} characters')
 
-    # 1️⃣ Create one folder for all logs based on current time
+    # Create one folder for all logs based on current time
     date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
     outfolder = os.path.join(os.path.abspath(args.outputdir), date_str)
     Path(outfolder).mkdir(parents=True, exist_ok=True)
     print(f'All logs will be saved in: {outfolder}')
 
-    # 2️⃣ Loop over iterations
+    # Loop over iterations
     for i in range(args.iterations):
         print(f'\n### Beginning ({i+1}/{args.iterations})')
         test_log = Log()
@@ -350,7 +353,7 @@ def run_input(args):
         test_log.end()
         print(f'### Finished ({i+1}/{args.iterations}), generated {test_log.tokens_generated} tokens')
 
-        # 3️⃣ Save the log to a numbered file in the folder
+        # Save the log to a numbered file in the folder
         outfilename = f'log_{i+1}.json'
         outfilepath = os.path.join(outfolder, outfilename)
         print(f'### Saving log to {outfilepath}')
@@ -384,6 +387,11 @@ def _task_worker(conn, args):
             lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
 
             conn.send('TASK_RUN_START')
+            for task_name in task_names:
+                if task_name.lower() == "piqa":
+                    print("Loading PiQA dataset...")
+                    load_dataset("piqa", split="validation")
+
             results = evaluator.simple_evaluate(
                 model=lm_eval_model,
                 tasks=task_names,
@@ -414,12 +422,12 @@ def run_tasks(args):
 
     print(f'All results and logs will be saved in: {outfolder}')
 
-    # 🟢 Start logging (parent process)
+    # Start logging (parent process)
     test_log = Log()
     test_log.begin(interval=0.1)
     sleep(3)  # buffer before launch
 
-    # 🧩 Launch subprocess for actual test
+    # Launch subprocess for actual test
     msg_recv, msg_send = Pipe()
     proc = Process(target=_task_worker, args=(msg_send, args))
     proc.start()
@@ -436,7 +444,7 @@ def run_tasks(args):
                 if "results" in msg:
                     results = msg["results"]
                 elif "error" in msg:
-                    print(f"⚠️ Error in subprocess: {msg['error']}")
+                    print(f"Error in subprocess: {msg['error']}")
 
     proc.join()
     msg_recv.close()
@@ -445,7 +453,7 @@ def run_tasks(args):
     test_log.end()
     print("Task process complete.")
 
-    # 🟢 Save results
+    # Save results
     if results is not None:
         task_suffix = "_".join(results["config"]["tasks"])
         outfilename = f"results_{task_suffix}.json"
@@ -453,18 +461,19 @@ def run_tasks(args):
 
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"✅ Saved results to {output_path}")
+        print(f"Saved results to {output_path}")
 
         # Also save log
         log_path = os.path.join(outfolder, "log.json")
         with open(log_path, "w") as f:
             f.write(test_log.to_json())
-        print(f"✅ Saved log to {log_path}")
+        print(f"Saved log to {log_path}")
     else:
         print("No results received from subprocess.")
 
 
 def main():
+    mp.set_start_method("spawn", force=True)
     args = parser.parse_args()
     if args.dump_awq and os.path.exists(args.dump_awq):
         print(f"Found existing AWQ results {args.dump_awq}, exit.")
