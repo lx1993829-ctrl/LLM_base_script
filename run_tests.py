@@ -389,29 +389,35 @@ def _task_worker(conn, args):
 
         sleep(3)  # buffer
 
-        if args.tasks is not None:
-            lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
+        if not args.run_tasks or len(args.run_tasks) == 0:
+            conn.send({"error": "No tasks provided. Please specify at least one task with --run_tasks."})
+            return
 
-            conn.send('TASK_RUN_START')
-            for task_name in args.run_tasks:
-                if task_name.lower() == "piqa":
-                    print("Loading PiQA dataset...")
-                    load_dataset("piqa", split="validation")
+        lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
 
-            results = evaluator.simple_evaluate(
-                model=lm_eval_model,
-                tasks=task_names,
-                batch_size=args.batch_size,
-                no_cache=True,
-                num_fewshot=args.num_fewshot,
-            )
-            conn.send('TASK_RUN_END')
+        conn.send('TASK_RUN_START')
+        task_names = args.run_tasks
 
-            # Add metadata
-            results["config"]["model"] = args.model_path
-            results["config"]["tasks"] = task_names
+        # Optional: preload dataset for demonstration
+        for task_name in task_names:
+            if task_name.lower() == "piqa":
+                print("Loading PiQA dataset...")
+                load_dataset("piqa", split="validation")
 
-            conn.send({"results": results, "tasks": task_names})
+        results = evaluator.simple_evaluate(
+            model=lm_eval_model,
+            tasks=task_names,
+            batch_size=args.batch_size,
+            no_cache=True,
+            num_fewshot=args.num_fewshot,
+        )
+        conn.send('TASK_RUN_END')
+
+        # Add metadata
+        results["config"]["model"] = args.model_path
+        results["config"]["tasks"] = task_names
+
+        conn.send({"results": results, "tasks": task_names})
 
     except Exception as e:
         conn.send({"error": str(e)})
