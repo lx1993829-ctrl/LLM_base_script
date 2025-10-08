@@ -94,18 +94,6 @@ if __name__ == "__main__":
         print("Usage: python plot_logs.py <log_folder>")
     else:
         main(sys.argv[1])
-✅ How it works:
-Reads each log_*.json from your run_input or run_tasks folder.
-
-Converts JSON back to Log objects using Log.from_json.
-
-Generates four types of plots per iteration:
-
-Power over time
-
-GPU frequency over time
-
-RAM and GPU memory usage
 
 Event timestamps (LOG_START, MODEL_LOAD_START, GENERATE_START, etc.)
 
