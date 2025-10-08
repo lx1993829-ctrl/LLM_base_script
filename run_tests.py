@@ -22,7 +22,6 @@ from awq.utils.lm_eval_adaptor import LMEvalAdaptor
 from awq.utils.utils import simple_dispatch_model
 from torch import nn
 import tqdm
-import os
 import sys
 from statlog import Log
 from datetime import datetime
@@ -43,12 +42,23 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--model_path", type=str,
                     help="Path of the hf model")
 
-parser.add_argument("--inputfile", type=str, default="./input.txt",
-                    help="File used as input for text generation (Default: ./input.txt)")
 
 group = parser.add_mutually_exclusive_group(required=True)
-group.add_argument("--run_tasks", action="store_true", help="Run the tasks workflow")
-group.add_argument("--run_input", action="store_true", help="Run the input workflow")
+
+group.add_argument(
+    "--run_tasks",
+    type=str,
+    nargs="+",
+    help="Specify one or more evaluation tasks (e.g., piqa hellaswag)"
+)
+
+# Run input text generation with an input file (e.g., ./input.txt)
+group.add_argument(
+    "--run_input",
+    type=str,
+    metavar="INPUT_FILE",
+    help="Run text generation on an input file (e.g. --run_input ./input.txt)"
+)
 
 
 parser.add_argument("--iterations", type=int, default=5,
@@ -66,9 +76,6 @@ parser.add_argument("--dtype", type=str, default="float16",
 
 parser.add_argument("--batch_size", type=int, default=1,
                     help="Batch size")
-
-parser.add_argument("--tasks", type=str, default=None,
-                    help="Tasks to evaluate")
 
 parser.add_argument("--num_fewshot", type=int, default=0)
 
@@ -309,7 +316,7 @@ def run_input(args):
     print("Loading input text...", end='')
     input_data = ""
     try:
-        with open(args.inputfile, 'r') as input_file:
+        with open(args.run_input, 'r') as input_file:
             input_data = '\n'.join(input_file.readlines())
     except FileNotFoundError:
         print(f"Input file {args.inputfile} not found!")
@@ -383,11 +390,10 @@ def _task_worker(conn, args):
         sleep(3)  # buffer
 
         if args.tasks is not None:
-            task_names = args.tasks.split(",")
             lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, args.batch_size)
 
             conn.send('TASK_RUN_START')
-            for task_name in task_names:
+            for task_name in args.run_tasks:
                 if task_name.lower() == "piqa":
                     print("Loading PiQA dataset...")
                     load_dataset("piqa", split="validation")
@@ -475,6 +481,8 @@ def run_tasks(args):
 def main():
     mp.set_start_method("spawn", force=True)
     args = parser.parse_args()
+    
+
     if args.dump_awq and os.path.exists(args.dump_awq):
         print(f"Found existing AWQ results {args.dump_awq}, exit.")
         exit()    
@@ -485,8 +493,10 @@ def main():
 
     # Dispatch to the correct function
     if args.run_tasks:
+        # args.run_tasks is now a list, e.g. ["piqa", "hellaswag"]
         run_tasks(args)
     elif args.run_input:
+        # args.run_input is now the path string, e.g. "./input.txt"
         run_input(args)
 
 
