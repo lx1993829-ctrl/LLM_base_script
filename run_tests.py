@@ -319,7 +319,7 @@ def run_input(args):
         with open(args.run_input, 'r') as input_file:
             input_data = '\n'.join(input_file.readlines())
     except FileNotFoundError:
-        print(f"Input file {args.inputfile} not found!")
+        print(f"Input file {args.run_input} not found!")
         return
     print(f'Got {len(input_data)} characters')
 
