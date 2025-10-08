@@ -301,14 +301,14 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
     print(output)
     
     # Capture attention of layer 3, head 1
+    inputs = enc(in_data, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        inputs = enc(input_data, return_tensors="pt").to(model.device)
-        outputs = model(**inputs)
+        outputs = model(**inputs, output_attentions=True)
         attn = outputs.attentions[3][0, 1].cpu().numpy()  # layer 3, head 1
 
-
-    conn.send({"attention": attn, "tokens": enc.convert_ids_to_tokens(inputs["input_ids"][0])})
-    conn.close()
+    if conn and not conn.closed:
+        conn.send({"attention": attn, "tokens": enc.convert_ids_to_tokens(inputs["input_ids"][0])})
+        conn.close()
     return output
 
 def run_input(args):
@@ -485,9 +485,12 @@ def run_tasks(args):
 
 
 def main():
-    mp.set_start_method("spawn", force=True)
     args = parser.parse_args()
     
+    if not args.run_tasks and not args.run_input:
+        parser.error("You must specify either --run_tasks or --run_input.")
+    if args.run_tasks and len(args.run_tasks) == 0:
+        parser.error("--run_tasks requires at least one task name.")
 
     if args.dump_awq and os.path.exists(args.dump_awq):
         print(f"Found existing AWQ results {args.dump_awq}, exit.")
@@ -507,4 +510,5 @@ def main():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main()
