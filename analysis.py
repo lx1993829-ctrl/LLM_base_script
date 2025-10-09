@@ -1,100 +1,114 @@
 import os
 import json
 import matplotlib.pyplot as plt
-import seaborn as sns
-from statlog import Log
+from matplotlib.backends.backend_pdf import PdfPages
 
-sns.set(style="whitegrid")
+def extract_series(entries):
+    """Extract (time, value) lists from a JSON list of dicts."""
+    times = [e["time"] for e in entries]
+    values = [e["value"] for e in entries]
+    return times, values
 
-def load_log(log_path):
-    with open(log_path, 'r') as f:
-        json_str = f.read()
-    return Log.from_json(json_str)
+def add_event_lines(ax, timestamps):
+    """Add vertical lines + text annotations for timestamp events."""
+    for entry in timestamps:
+        t, label = entry["time"], entry["value"]
+        ax.axvline(x=t, color="red", linestyle="--", linewidth=0.8)
+        ax.text(
+            t, ax.get_ylim()[1]*0.95, label, rotation=90, va="top", ha="right",
+            fontsize=7, color="red", alpha=0.8
+        )
 
-def add_events(ax, log: Log):
-    """Add vertical lines for each timestamp event."""
-    for entry in log.timestamps:
-        time = entry.time
-        value = entry.value
-        ax.axvline(x=time, color='red', linestyle='--', alpha=0.5)
-        ax.text(time, ax.get_ylim()[1]*0.95, value, rotation=90,
-                verticalalignment='top', fontsize=8, color='red')
+def plot_log(json_path, output_dir):
+    """Load one JSON log and plot all metrics with event lines."""
+    with open(json_path, "r") as f:
+        data = json.load(f)
 
-def plot_power(log: Log, outdir: str):
-    times = [entry.time for entry in log.power]
-    values = [entry.value for entry in log.power]
-    plt.figure(figsize=(10,4))
-    ax = plt.gca()
-    ax.plot(times, values, label="Power (W)")
-    add_events(ax, log)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Power (W)")
-    plt.title("Power over Time")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "power_over_time.pdf"))
-    plt.close()
+    base_name = os.path.splitext(os.path.basename(json_path))[0]
+    pdf_path = os.path.join(output_dir, f"{base_name}_plots.pdf")
+    timestamps = data.get("timestamps", [])
 
-def plot_gpu_freq(log: Log, outdir: str):
-    times = [entry.time for entry in log.freq_gpu]
-    values = [entry.value for entry in log.freq_gpu]
-    plt.figure(figsize=(10,4))
-    ax = plt.gca()
-    ax.plot(times, values, label="GPU Frequency (MHz)", color="orange")
-    add_events(ax, log)
-    plt.xlabel("Time (s)")
-    plt.ylabel("GPU Frequency (MHz)")
-    plt.title("GPU Frequency over Time")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "gpu_freq_over_time.pdf"))
-    plt.close()
+    with PdfPages(pdf_path) as pdf:
+        # --- 1. RAM Usage ---
+        if "memory_ram" in data and data["memory_ram"]:
+            plt.figure(figsize=(9, 4))
+            for pid, entries in data["memory_ram"].items():
+                t, v = extract_series(entries)
+                plt.plot(t, [x / 1024 for x in v], label=f"PID {pid}")
+            plt.xlabel("Time (s)")
+            plt.ylabel("RAM (MB)")
+            plt.title("RAM Usage Over Time")
+            plt.grid(True)
+            add_event_lines(plt.gca(), timestamps)
+            pdf.savefig()
+            plt.close()
 
-def plot_ram_gpu(log: Log, outdir: str):
-    plt.figure(figsize=(10,5))
-    ax = plt.gca()
-    # Plot RAM
-    for pid, mem_list in log.memory_ram.items():
-        times = [entry.time for entry in mem_list]
-        values = [entry.value/1000 for entry in mem_list]  # KB -> MB
-        ax.plot(times, values, label=f"RAM PID {pid} (MB)")
-    # Plot GPU memory
-    for pid, mem_list in log.memory_gpu.items():
-        times = [entry.time for entry in mem_list]
-        values = [entry.value/1000 for entry in mem_list]  # KB -> MB
-        ax.plot(times, values, "--", label=f"GPU Mem PID {pid} (MB)")
-    
-    add_events(ax, log)
-    
-    plt.xlabel("Time (s)")
-    plt.ylabel("Memory (MB)")
-    plt.title("RAM and GPU Memory Usage")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "ram_gpu_mem.pdf"))
-    plt.close()
+        # --- 2. GPU Memory ---
+        if "memory_gpu" in data and data["memory_gpu"]:
+            plt.figure(figsize=(9, 4))
+            for pid, entries in data["memory_gpu"].items():
+                if not entries:
+                    continue
+                t, v = extract_series(entries)
+                plt.plot(t, [x / 1024 for x in v], label=f"PID {pid}")
+            plt.xlabel("Time (s)")
+            plt.ylabel("GPU Memory (MB)")
+            plt.title("GPU Memory Usage Over Time")
+            plt.grid(True)
+            add_event_lines(plt.gca(), timestamps)
+            pdf.savefig()
+            plt.close()
 
-def main(log_folder):
-    output_dir = os.path.join(log_folder, "plots")
+        # --- 3. GPU Frequency ---
+        if "freq_gpu" in data and data["freq_gpu"]:
+            t, v = extract_series(data["freq_gpu"])
+            plt.figure(figsize=(9, 4))
+            plt.plot(t, v, label="GPU Frequency")
+            plt.xlabel("Time (s)")
+            plt.ylabel("GPU Frequency (MHz)")
+            plt.title("GPU Frequency Over Time")
+            plt.grid(True)
+            add_event_lines(plt.gca(), timestamps)
+            pdf.savefig()
+            plt.close()
+
+        # --- 4. Power ---
+        if "power" in data and data["power"]:
+            t, v = extract_series(data["power"])
+            plt.figure(figsize=(9, 4))
+            plt.plot(t, v, label="Power (W)")
+            plt.xlabel("Time (s)")
+            plt.ylabel("Power (W)")
+            plt.title("Power Usage Over Time")
+            plt.grid(True)
+            add_event_lines(plt.gca(), timestamps)
+            pdf.savefig()
+            plt.close()
+
+    print(f"Saved {pdf_path}")
+
+def main(log_dir):
+    """Process all log_*.json files in the directory."""
+    if not os.path.isdir(log_dir):
+        print(f"Directory not found: {log_dir}")
+        return
+
+    output_dir = os.path.join(log_dir, "plots")
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Load all log files
-    log_files = [f for f in os.listdir(log_folder) if f.startswith("log") and f.endswith(".json")]
-    for lf in log_files:
-        log_path = os.path.join(log_folder, lf)
-        log = load_log(log_path)
-        base_name = os.path.splitext(lf)[0]
-        outdir_iter = os.path.join(output_dir, base_name)
-        os.makedirs(outdir_iter, exist_ok=True)
 
-        plot_power(log, outdir_iter)
-        plot_gpu_freq(log, outdir_iter)
-        plot_ram_gpu(log, outdir_iter)
-        print(f"Plots saved for {lf} in {outdir_iter}")
+    json_files = [f for f in os.listdir(log_dir) if f.startswith("log_") and f.endswith(".json")]
+    if not json_files:
+        print(f"No log_*.json files found in {log_dir}")
+        return
+
+    for jf in sorted(json_files):
+        json_path = os.path.join(log_dir, jf)
+        plot_log(json_path, output_dir)
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python plot_logs.py <log_folder>")
-    else:
-        main(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description="Plot RAM, GPU, Power with events from log JSONs.")
+    parser.add_argument("log_dir", type=str, help="Directory containing log_*.json files.")
+    args = parser.parse_args()
+
+    main(args.log_dir)
