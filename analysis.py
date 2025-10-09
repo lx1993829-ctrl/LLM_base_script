@@ -94,7 +94,3 @@ if __name__ == "__main__":
         print("Usage: python plot_logs.py <log_folder>")
     else:
         main(sys.argv[1])
-
-Event timestamps (LOG_START, MODEL_LOAD_START, GENERATE_START, etc.)
-
-Saves plots in a subfolder plots/log_1/, plots/log_2/, etc.
