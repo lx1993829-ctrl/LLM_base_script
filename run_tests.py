@@ -439,15 +439,14 @@ def run_tasks(args):
     print(f'All results and logs will be saved in: {outfolder}')
 
     # Start logging (parent process)
-    test_log = Log()
-    test_log.begin(interval=0.1)
-    sleep(3)  # buffer before launch
 
     # Launch subprocess for actual test
     msg_recv, msg_send = Pipe()
     proc = Process(target=_task_worker, args=(msg_send, args))
     proc.start()
-
+    child_pid = proc.pid
+    test_log = Log(target_pid=child_pid)
+    test_log.begin(interval=0.1)
     results = None
     while proc.is_alive():
         if msg_recv.poll():
