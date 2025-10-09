@@ -11,11 +11,22 @@ def load_log(log_path):
         json_str = f.read()
     return Log.from_json(json_str)
 
+def add_events(ax, log: Log):
+    """Add vertical lines for each timestamp event."""
+    for entry in log.timestamps:
+        time = entry.time
+        value = entry.value
+        ax.axvline(x=time, color='red', linestyle='--', alpha=0.5)
+        ax.text(time, ax.get_ylim()[1]*0.95, value, rotation=90,
+                verticalalignment='top', fontsize=8, color='red')
+
 def plot_power(log: Log, outdir: str):
     times = [entry.time for entry in log.power]
     values = [entry.value for entry in log.power]
     plt.figure(figsize=(10,4))
-    plt.plot(times, values, label="Power (W)")
+    ax = plt.gca()
+    ax.plot(times, values, label="Power (W)")
+    add_events(ax, log)
     plt.xlabel("Time (s)")
     plt.ylabel("Power (W)")
     plt.title("Power over Time")
@@ -28,7 +39,9 @@ def plot_gpu_freq(log: Log, outdir: str):
     times = [entry.time for entry in log.freq_gpu]
     values = [entry.value for entry in log.freq_gpu]
     plt.figure(figsize=(10,4))
-    plt.plot(times, values, label="GPU Frequency (MHz)", color="orange")
+    ax = plt.gca()
+    ax.plot(times, values, label="GPU Frequency (MHz)", color="orange")
+    add_events(ax, log)
     plt.xlabel("Time (s)")
     plt.ylabel("GPU Frequency (MHz)")
     plt.title("GPU Frequency over Time")
@@ -39,34 +52,26 @@ def plot_gpu_freq(log: Log, outdir: str):
 
 def plot_ram_gpu(log: Log, outdir: str):
     plt.figure(figsize=(10,5))
+    ax = plt.gca()
+    # Plot RAM
     for pid, mem_list in log.memory_ram.items():
         times = [entry.time for entry in mem_list]
-        values = [entry.value/1000 for entry in mem_list]  # Convert KB -> MB
-        plt.plot(times, values, label=f"RAM PID {pid} (MB)")
+        values = [entry.value/1000 for entry in mem_list]  # KB -> MB
+        ax.plot(times, values, label=f"RAM PID {pid} (MB)")
+    # Plot GPU memory
     for pid, mem_list in log.memory_gpu.items():
         times = [entry.time for entry in mem_list]
         values = [entry.value/1000 for entry in mem_list]  # KB -> MB
-        plt.plot(times, values, "--", label=f"GPU Mem PID {pid} (MB)")
+        ax.plot(times, values, "--", label=f"GPU Mem PID {pid} (MB)")
+    
+    add_events(ax, log)
+    
     plt.xlabel("Time (s)")
     plt.ylabel("Memory (MB)")
     plt.title("RAM and GPU Memory Usage")
     plt.legend()
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "ram_gpu_mem.pdf"))
-    plt.close()
-
-def plot_timestamps(log: Log, outdir: str):
-    times = [entry.time for entry in log.timestamps]
-    labels = [entry.value for entry in log.timestamps]
-    plt.figure(figsize=(10,2))
-    plt.eventplot(times, lineoffsets=1, colors="green")
-    for t, label in zip(times, labels):
-        plt.text(t, 1.05, label, rotation=45, ha="right")
-    plt.xlabel("Time (s)")
-    plt.yticks([])
-    plt.title("Event Timestamps")
-    plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "timestamps.pdf"))
     plt.close()
 
 def main(log_folder):
@@ -85,7 +90,6 @@ def main(log_folder):
         plot_power(log, outdir_iter)
         plot_gpu_freq(log, outdir_iter)
         plot_ram_gpu(log, outdir_iter)
-        plot_timestamps(log, outdir_iter)
         print(f"Plots saved for {lf} in {outdir_iter}")
 
 if __name__ == "__main__":
