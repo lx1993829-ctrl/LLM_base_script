@@ -1,6 +1,7 @@
 from lm_eval import evaluator, tasks
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 import torch
+from jtop import jtop
 import argparse
 import os
 import multiprocessing as mp
@@ -278,7 +279,7 @@ def build_model_and_enc(model_path, dtype, args):
 def _individual_test(in_data, conn, tokens_to_gen, args):
     '''Test method content, performed on a separate process.'''
     # Change any content within TEST BEGIN and TEST END to change the testing behavior!
-    # TEST BEGIN
+    # TEST BEGIN 
     conn.send('IDLE_START')
     print('Running idle period for power baseline')
     sleep(15)
@@ -294,10 +295,9 @@ def _individual_test(in_data, conn, tokens_to_gen, args):
 
     conn.send('GENERATE_START')
     output, new_tokens = generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
-    conn.send('GENERATE_END')
+    conn.send(f'GENERATE_END TOKENS:{len(new_tokens)}')
 
     # TEST END
-    conn.send(f'TOKENS:{len(new_tokens)}')
     print(output)
     
     # Capture attention of layer 3, head 1
@@ -332,14 +332,18 @@ def run_input(args):
     # Loop over iterations
     for i in range(args.iterations):
         print(f'\n### Beginning ({i+1}/{args.iterations})')
-        test_log = Log()
-        test_log.begin(interval=0.1)
-        sleep(3)  # buffer time
+       # test_log = Log(target_pid=child_pid)
+       # test_log.begin(interval=0.1)
+       # sleep(3)  # buffer time
 
         # run the model in a separate process
         msg_recv, msg_send = Pipe()
         proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args])
         proc.start()
+        child_pid = proc.pid
+        test_log = Log(target_pid=child_pid)
+        test_log.begin(interval=0.1)
+        print(f"Spawned _individual_test with PID={child_pid}")
         attn_data = None
         while proc.is_alive():
             if msg_recv.poll():
