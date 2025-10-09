@@ -1,17 +1,3 @@
-# Helper functions for logging statistics.
-# 
-# Although it is possible to set up multiple Log class instances, custom intervals will
-# not function properly. Multiple instances of jtop with different intervals do not 
-# function at the proper intervals together, and they will default to 1 s intervals.
-# 
-# Additional stats (either from jtop or another source) can be added in the Log._log_cb()
-# callback method. This method is called by jtop at the interval given in the Log.begin()
-# method, but any stats can be added to this function to ensure they are logged at said
-# interval.
-# 
-# jtop reference: https://rnext.it/jetson_stats/reference/jtop.html 
-# 
-# Liam Seymour 6/18/24
 
 import importlib.util
 jtop_exists = importlib.util.find_spec('jtop') is not None
@@ -65,7 +51,7 @@ class Log:
     if jtop_exists:
         _jtop: jtop
 
-    def __init__(self):
+    def __init__(self, target_pid: int | None = None):
         self.time_log_start = -1
         self.time_log_end = -1
         self.timestamps = list()
@@ -75,7 +61,7 @@ class Log:
         self.power = list()
         self.tokens_generated = -1
         self.accuracy = -1
-    
+        self.target_pid = target_pid
     def _t(self) -> float:
         return get_time() - self.time_log_start
 
@@ -89,24 +75,35 @@ class Log:
 
         # log gpu frequency data
         self.freq_gpu.append(LogEntry(t, (jetson.gpu['gpu']['freq']['cur'] / 1000)))
-
+            # Log memory usage of all 'python' processes
         # Process-specific data
         for proc in jetson.processes:
-            name = proc[9]
-            if "python" in name:  # include 'python' and 'python3'
-                pid = proc[0]
-                ram_kb = proc[7]
-                gpu_kb = proc[8]
-    
-                # Initialize if new PID
+            pid = proc[0]
+            if pid == self.target_pid:
+                ram_kb = proc[7]  # RAM usage (KB)
+                gpu_kb = proc[8]  # GPU usage (KB)
+
                 if pid not in self.memory_ram:
                     self.memory_ram[pid] = []
                 if pid not in self.memory_gpu:
                     self.memory_gpu[pid] = []
-    
-                # Append data
+
                 self.memory_ram[pid].append(LogEntry(t, ram_kb))
                 self.memory_gpu[pid].append(LogEntry(t, gpu_kb))
+                break
+        # log process-specific data
+       # for proc in jetson.processes:
+            # pytorch process we want is always called 'pt_main_thread', GPU mem usage reflects model loading
+           # if proc[9] == "pt_main_thread":
+               # pid = proc[0]
+               # if not pid in self.memory_ram:
+               #     self.memory_ram[pid] = list()
+               # if not pid in self.memory_gpu:
+               #     self.memory_gpu[pid] = list()
+                
+                # log RAM and GPU memory
+               # self.memory_ram[pid].append(LogEntry(t, proc[7]))
+               # self.memory_gpu[pid].append(LogEntry(t, proc[8]))
     
     def add_timestamp(self, info: str):
         '''Adds a timestamped message to the log.'''
@@ -237,7 +234,7 @@ class Log:
         self._jtop = jtop(interval=interval)
         self._jtop.attach(self._log_cb)
         self.time_log_start = get_time()
-        self.add_timestamp('LOG_START')
+  #      self.add_timestamp('LOG_START')
         self._jtop.start()
 
     def end(self):
@@ -250,7 +247,7 @@ class Log:
             raise ImportError('Cannot end log, jtop is not installed!')
         
         self._jtop.close()
-        self.add_timestamp('LOG_END')
+  #      self.add_timestamp('LOG_END')
         self.time_log_end = get_time()
         del self._jtop
 
