@@ -90,19 +90,23 @@ class Log:
         # log gpu frequency data
         self.freq_gpu.append(LogEntry(t, (jetson.gpu['gpu']['freq']['cur'] / 1000)))
 
-        # log process-specific data
+        # Process-specific data
         for proc in jetson.processes:
-            # pytorch process we want is always called 'pt_main_thread', GPU mem usage reflects model loading
-            if proc[9] == "pt_main_thread":
+            name = proc[9]
+            if "python" in name:  # include 'python' and 'python3'
                 pid = proc[0]
-                if not pid in self.memory_ram:
-                    self.memory_ram[pid] = list()
-                if not pid in self.memory_gpu:
-                    self.memory_gpu[pid] = list()
-                
-                # log RAM and GPU memory
-                self.memory_ram[pid].append(LogEntry(t, proc[7]))
-                self.memory_gpu[pid].append(LogEntry(t, proc[8]))
+                ram_kb = proc[7]
+                gpu_kb = proc[8]
+    
+                # Initialize if new PID
+                if pid not in self.memory_ram:
+                    self.memory_ram[pid] = []
+                if pid not in self.memory_gpu:
+                    self.memory_gpu[pid] = []
+    
+                # Append data
+                self.memory_ram[pid].append(LogEntry(t, ram_kb))
+                self.memory_gpu[pid].append(LogEntry(t, gpu_kb))
     
     def add_timestamp(self, info: str):
         '''Adds a timestamped message to the log.'''
