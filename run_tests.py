@@ -143,53 +143,6 @@ def generate_from_input(model, tokenizer, input_text: str, max_new_tokens=64) ->
     return decoded, new_tokens
 
 
-def generate_attention_heatmap(attn_logits, tokens, save_path):
-    """
-    Generate a heatmap for attention logits with masked future positions in dark grey.
-
-    Parameters:
-    - attn_logits: 2D np.array (seq_len x seq_len), attention logits (pro-softmax)
-    - tokens: list of tokens
-    - save_path: file path to save PDF
-    """
-
-    # Clean token labels
-    def clean_token_label(token):
-        token = token.lstrip("_")
-        token = token.replace("\u0120", "").replace("\u2581", "")
-        return token.strip()
-
-    tokens_clean = [clean_token_label(t) for t in tokens]
-    seq_len = len(tokens_clean)
-
-    # Create causal mask (upper triangle)
-    mask = np.triu(np.ones_like(attn_logits, dtype=bool), k=1)
-
-    # Masked array: masked cells will be shown in dark grey
-    display_matrix = np.ma.array(attn_logits, mask=mask)
-
-    # Colormap
-    cmap = plt.cm.RdBu_r
-    cmap.set_bad(color='darkgrey')  # grey for masked cells
-
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(
-        display_matrix,
-        cmap=cmap,
-        cbar_kws={"label": "Attention logits"},
-        linewidths=0.5,
-        xticklabels=tokens_clean,
-        yticklabels=tokens_clean
-    )
-
-    plt.xticks(rotation=90, fontsize=7)  # smaller font
-    plt.yticks(rotation=0, fontsize=7)
-    plt.xlabel("Key tokens")
-    plt.ylabel("Query tokens")
-    plt.title("Attention logits heatmap (Layer X, Head Y)")
-    plt.tight_layout()
-    plt.savefig(save_path, format="pdf")
-    plt.close()  
 
 def build_model_and_enc(model_path, dtype, args):
     q_config = {
@@ -345,8 +298,11 @@ def _individual_test(in_data, conn, tokens_to_gen, args, outfolder, iter_idx):
 
     conn.send('GENERATE_START')
     output, new_tokens = generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
-    conn.send(f'GENERATE_END:TOKENS:{len(new_tokens)}')
-
+    conn.send('GENERATE_END')
+    # TEST END
+    conn.send(f'TOKENS:{len(new_tokens)}')
+    print(output)
+    conn.close()
     # Encode inputs for attention capture
     inputs = enc(in_data, return_tensors="pt").to(model.device)
     with torch.no_grad():
@@ -363,7 +319,8 @@ def _individual_test(in_data, conn, tokens_to_gen, args, outfolder, iter_idx):
 
     tokens = enc.convert_ids_to_tokens(inputs["input_ids"][0])
     tokens_clean = [t.lstrip("_").replace("\u0120", "").replace("\u2581", "").strip() for t in tokens]
-    
+
+    # Generate heatmap of first 20 tokens
     seq_len = len(tokens_clean)
     max_tokens = 20
     tokens_clean = tokens_clean[:max_tokens]
@@ -398,8 +355,6 @@ def _individual_test(in_data, conn, tokens_to_gen, args, outfolder, iter_idx):
     plt.close()
     print(f"Saved attention heatmap to {heatmap_path}")
 
-    if conn and not conn.closed:
-        conn.close()
 
     return output
     
