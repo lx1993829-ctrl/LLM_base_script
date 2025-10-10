@@ -2,6 +2,7 @@ from lm_eval import evaluator, tasks
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 import torch
 from jtop import jtop
+import numpy as np
 import argparse
 import os
 import multiprocessing as mp
@@ -121,24 +122,77 @@ def generate_from_input(model, tokenizer, input_text: str, max_new_tokens=64) ->
     Returns the generated text and a list of the generated tokens.'''
     model_inputs = tokenizer([input_text], return_tensors="pt").to("cuda")
     print("Generating tokens...")
+    
+
+    # Get IDs from tokenizer if missing
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    pad_id = getattr(tokenizer, "pad_token_id", None) or eos_id
+
+    # Update both configs
+    model.config.eos_token_id = eos_id
+    model.config.pad_token_id = pad_id
+
+    if hasattr(model, "generation_config"):
+        model.generation_config.eos_token_id = eos_id
+        model.generation_config.pad_token_id = pad_id
+
     generated_ids = model.generate(**model_inputs, max_new_tokens=max_new_tokens, do_sample=True)
     print("Decoding tokens...")
     decoded = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
     new_tokens = generated_ids[0][len(model_inputs['input_ids'][0]):]
     return decoded, new_tokens
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 
-def generate_attention_heatmap(attn, tokens, save_path):
-    plt.figure(figsize=(8,6))
-    sns.heatmap(attn, cmap="viridis")
-    plt.title("Attention heatmap (Layer 3, Head 1)")
-    plt.xticks(ticks=range(len(tokens)), labels=tokens, rotation=90)
-    plt.yticks(ticks=range(len(tokens)), labels=tokens, rotation=0)
+def generate_attention_heatmap(attn_logits, tokens, save_path):
+    """
+    Generate a heatmap for attention logits with masked future positions in dark grey.
+
+    Parameters:
+    - attn_logits: 2D np.array (seq_len x seq_len), raw attention logits (pre-softmax)
+    - tokens: list of tokens
+    - save_path: file path to save PDF
+    """
+
+    # Clean token labels
+    def clean_token_label(token):
+        token = token.lstrip("_")
+        token = token.replace("\u0120", "").replace("\u2581", "")
+        return token.strip()
+
+    tokens_clean = [clean_token_label(t) for t in tokens]
+    seq_len = len(tokens_clean)
+
+    # Create causal mask (upper triangle)
+    mask = np.triu(np.ones_like(attn_logits, dtype=bool), k=1)
+
+    # Masked array: masked cells will be shown in dark grey
+    display_matrix = np.ma.array(attn_logits, mask=mask)
+
+    # Colormap
+    cmap = plt.cm.RdBu_r
+    cmap.set_bad(color='darkgrey')  # grey for masked cells
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(
+        display_matrix,
+        cmap=cmap,
+        cbar_kws={"label": "Attention logits"},
+        linewidths=0.5,
+        xticklabels=tokens_clean,
+        yticklabels=tokens_clean
+    )
+
+    plt.xticks(rotation=90, fontsize=7)  # smaller font
+    plt.yticks(rotation=0, fontsize=7)
     plt.xlabel("Key tokens")
     plt.ylabel("Query tokens")
+    plt.title("Attention logits heatmap (Layer X, Head Y)")
     plt.tight_layout()
     plt.savefig(save_path, format="pdf")
-    plt.close()
+    plt.close()  
 
 def build_model_and_enc(model_path, dtype, args):
     q_config = {
@@ -164,15 +218,16 @@ def build_model_and_enc(model_path, dtype, args):
             model_path, use_fast=False, trust_remote_code=True
         )
 
+
     if args.load_quant:  # directly load quantized weights
         print("Loading pre-computed quantized weights...")
         with init_empty_weights():
             model = AutoModelForCausalLM.from_config(
-                config=config, torch_dtype=torch_dtype, trust_remote_code=True
+                config=config, torch_dtype=torch_dtype, trust_remote_code=True, attn_implementation="eager",
             )
         real_quantize_model_weight(
             model, w_bit=args.w_bit, q_config=q_config, init_only=True
-        )
+        ) 
 
         model.tie_weights()
 
@@ -202,7 +257,7 @@ def build_model_and_enc(model_path, dtype, args):
         args.run_awq &= not args.load_awq  # if load_awq, no need to run awq
         # Init model on CPU:
         model = AutoModelForCausalLM.from_pretrained(
-            model_path, config=config, trust_remote_code=True, 
+            model_path, config=config, trust_remote_code=True,attn_implementation="eager",
         )
 
         model.eval()
@@ -276,41 +331,81 @@ def build_model_and_enc(model_path, dtype, args):
 
 
 # The following function is used in a separate process to run the generation test.
-def _individual_test(in_data, conn, tokens_to_gen, args):
-    '''Test method content, performed on a separate process.'''
-    # Change any content within TEST BEGIN and TEST END to change the testing behavior!
-    # TEST BEGIN 
-    conn.send('IDLE_START')
-    print('Running idle period for power baseline')
-    sleep(15)
-    conn.send('IDLE_END')
+def _individual_test(in_data, conn, tokens_to_gen, args, outfolder, iter_idx):
+    """
+    Run a single generation + attention capture test in a subprocess.
+    Saves attention heatmap PDFs with causal masking for each iteration.
+    """
 
-    sleep(3) # buffer time
+    conn.send('IDLE_START')
+    sleep(5)  # baseline idle
+    conn.send('IDLE_END')
 
     conn.send('MODEL_LOAD_START')
     model, enc = build_model_and_enc(args.model_path, args.dtype, args)
     conn.send('MODEL_LOAD_END')
-
-    sleep(3) # buffer time
+    sleep(2)
 
     conn.send('GENERATE_START')
     output, new_tokens = generate_from_input(model, enc, in_data, max_new_tokens=tokens_to_gen)
-    conn.send(f'GENERATE_END TOKENS:{len(new_tokens)}')
+    conn.send(f'GENERATE_END:TOKENS:{len(new_tokens)}')
 
-    # TEST END
-    print(output)
-    
-    # Capture attention of layer 3, head 1
+    # Encode inputs for attention capture
     inputs = enc(in_data, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        outputs = model(**inputs, output_attentions=True)
-        attn = outputs.attentions[3][0, 1].cpu().numpy()  # layer 3, head 1
+        outputs = model(**inputs, output_attentions=True, return_dict=True)
+
+    # Capture layer 3, head 0 (adjust if needed)
+    attn = outputs.attentions[3]  # shape: (batch, heads, seq_len, seq_len) or (batch, seq_len, seq_len)
+    if attn.ndim == 4:
+        attn_logits = attn[0, 0].cpu().numpy()  # batch=0, head=0
+    elif attn.ndim == 3:
+        attn_logits = attn[0].cpu().numpy()     # batch=0, no head dim
+    else:
+        raise ValueError(f"Unexpected attention shape: {attn.shape}")
+
+    tokens = enc.convert_ids_to_tokens(inputs["input_ids"][0])
+    tokens_clean = [t.lstrip("_").replace("\u0120", "").replace("\u2581", "").strip() for t in tokens]
+    
+    seq_len = len(tokens_clean)
+    half_len = seq_len // 2  # take first half
+    tokens_clean = tokens_clean[:half_len]
+    attn_logits = attn_logits[:half_len, :half_len]
+    
+    # Causal mask
+    mask = np.triu(np.ones_like(attn_logits, dtype=bool), k=1)
+    
+    # Colormap
+    cmap = plt.cm.RdBu_r
+    cmap.set_bad(color='darkgrey')
+    
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(
+        attn_logits,
+        mask=mask,
+        cmap=cmap,
+        cbar_kws={"label": "Attention logits"},
+        linewidths=0.5,
+        xticklabels=tokens_clean,
+        yticklabels=tokens_clean
+    )
+    plt.xticks(rotation=90, fontsize=7)
+    plt.yticks(rotation=0, fontsize=7)
+    plt.xlabel("Key tokens")
+    plt.ylabel("Query tokens")
+    plt.title(f"Attention logits heatmap (Layer 3, Head 0, Iter {iter_idx})")
+    plt.tight_layout()
+    
+    heatmap_path = os.path.join(outfolder, f"attention_layer3_head0_iter{iter_idx}.pdf")
+    plt.savefig(heatmap_path, format="pdf")
+    plt.close()
+    print(f"Saved attention heatmap to {heatmap_path}")
 
     if conn and not conn.closed:
-        conn.send({"attention": attn, "tokens": enc.convert_ids_to_tokens(inputs["input_ids"][0])})
         conn.close()
-    return output
 
+    return output
+    
 def run_input(args):
     # load input data (text) from the given input file
     print("Loading input text...", end='')
@@ -338,7 +433,7 @@ def run_input(args):
 
         # run the model in a separate process
         msg_recv, msg_send = Pipe()
-        proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args])
+        proc = Process(target=_individual_test, args=[input_data, msg_send, args.tokens, args, outfolder, i+1])
         proc.start()
         child_pid = proc.pid
         test_log = Log(target_pid=child_pid)
@@ -371,11 +466,7 @@ def run_input(args):
         json_str = test_log.to_json()
         with open(outfilepath, 'w') as fp:
             fp.write(json_str)
-
-        if attn_data is not None:
-            heatmap_path = os.path.join(outfolder, f"log_{i+1}_attention.pdf")
-            generate_attention_heatmap(attn_data["attention"], attn_data["tokens"], heatmap_path)
-            print(f"### Saved attention heatmap to {heatmap_path}")        
+        
 
 def _task_worker(conn, args):
     """Run LM Evaluation tasks inside a separate process."""
@@ -439,14 +530,15 @@ def run_tasks(args):
     print(f'All results and logs will be saved in: {outfolder}')
 
     # Start logging (parent process)
+    test_log = Log()
+    test_log.begin(interval=0.1)
+    sleep(3)  # buffer before launch
 
     # Launch subprocess for actual test
     msg_recv, msg_send = Pipe()
     proc = Process(target=_task_worker, args=(msg_send, args))
     proc.start()
-    child_pid = proc.pid
-    test_log = Log(target_pid=child_pid)
-    test_log.begin(interval=0.1)
+
     results = None
     while proc.is_alive():
         if msg_recv.poll():
