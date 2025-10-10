@@ -142,16 +142,13 @@ def generate_from_input(model, tokenizer, input_text: str, max_new_tokens=64) ->
     new_tokens = generated_ids[0][len(model_inputs['input_ids'][0]):]
     return decoded, new_tokens
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
 
 def generate_attention_heatmap(attn_logits, tokens, save_path):
     """
     Generate a heatmap for attention logits with masked future positions in dark grey.
 
     Parameters:
-    - attn_logits: 2D np.array (seq_len x seq_len), raw attention logits (pre-softmax)
+    - attn_logits: 2D np.array (seq_len x seq_len), attention logits (pro-softmax)
     - tokens: list of tokens
     - save_path: file path to save PDF
     """
@@ -368,9 +365,9 @@ def _individual_test(in_data, conn, tokens_to_gen, args, outfolder, iter_idx):
     tokens_clean = [t.lstrip("_").replace("\u0120", "").replace("\u2581", "").strip() for t in tokens]
     
     seq_len = len(tokens_clean)
-    half_len = seq_len // 2  # take first half
-    tokens_clean = tokens_clean[:half_len]
-    attn_logits = attn_logits[:half_len, :half_len]
+    max_tokens = 20
+    tokens_clean = tokens_clean[:max_tokens]
+    attn_logits = attn_logits[:max_tokens, :max_tokens]
     
     # Causal mask
     mask = np.triu(np.ones_like(attn_logits, dtype=bool), k=1)
@@ -538,7 +535,10 @@ def run_tasks(args):
     msg_recv, msg_send = Pipe()
     proc = Process(target=_task_worker, args=(msg_send, args))
     proc.start()
-
+    child_pid = proc.pid
+    test_log = Log(target_pid=child_pid)
+    test_log.begin(interval=0.1)
+    print(f"Spawned _task_worder with PID={child_pid}")
     results = None
     while proc.is_alive():
         if msg_recv.poll():
