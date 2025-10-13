@@ -2,6 +2,8 @@ import os
 import json
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+import re 
+
 
 def extract_series(entries):
     """Extract (time, value) lists from a JSON list of dicts."""
@@ -96,7 +98,11 @@ def main(log_dir):
     output_dir = os.path.join(log_dir, "plots")
     os.makedirs(output_dir, exist_ok=True)
 
-    json_files = [f for f in os.listdir(log_dir) if f.startswith("log_") and f.endswith(".json")]
+    json_files = [
+        f for f in os.listdir(log_dir)
+        if re.match(r'(?i)^log(_\d+)?\.json$', f)  # ^log optional _digits .json, case-insensitive
+    ]
+    
     if not json_files:
         print(f"No log_*.json files found in {log_dir}")
         return
