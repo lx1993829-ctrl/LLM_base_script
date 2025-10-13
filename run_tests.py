@@ -448,7 +448,7 @@ def _task_worker(conn, args):
         # Optional: preload dataset for demonstration
         for task_name in task_names:
             print(f"Loading {task_name} dataset...")
-            load_dataset(task_name, split="validation")
+            load_dataset(task_name, split="test")
 
         results = evaluator.simple_evaluate(
             model=lm_eval_model,
